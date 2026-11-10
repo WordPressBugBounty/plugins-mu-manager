@@ -7,7 +7,7 @@ Author URI: https://josemortellaro.com
 Plugin URI: https://josemortellaro.com
 Domain Path: /languages/
 Text Domain: mu-manager
-Version: 0.0.6
+Version: 0.0.7
 */
 /*  This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by

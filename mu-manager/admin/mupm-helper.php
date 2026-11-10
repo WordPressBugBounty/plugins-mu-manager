@@ -62,32 +62,83 @@ function eos_mupm_get_disabled_mu_plugins_data() {
     return $wp_plugins;
 }
 
+//Normalize an mu-plugin request to a bare filename inside mu-plugins.
+function eos_mupm_normalize_mu_plugin_basename( $mu_plugin ) {
+	$mu_plugin = basename( str_replace( '\\', '/', wp_unslash( (string) $mu_plugin ) ) );
+	if ( '' === $mu_plugin || '.' === $mu_plugin || '..' === $mu_plugin ) {
+		return '';
+	}
+	if ( false !== strpos( $mu_plugin, "\0" ) ) {
+		return '';
+	}
+	return $mu_plugin;
+}
+
+//Whether the current request may manage mu-plugins through Mu Manager.
+function eos_mupm_user_can_manage_mu_plugins( $capability = 'activate_plugins' ) {
+	if ( is_multisite() && ! is_network_admin() ) {
+		return false;
+	}
+	return function_exists( 'current_user_can' ) && current_user_can( $capability );
+}
+
 //Activate mu-plugin
 function eos_mupm_activate_mu_plugin( $mu_plugin ){
-  if( current_user_can( 'activate_plugins' ) ){
-    eos_mupm_rename_mu_plugin( $mu_plugin, str_replace( pathinfo( $mu_plugin, PATHINFO_EXTENSION ), 'php', $mu_plugin ) );
+  if( ! eos_mupm_user_can_manage_mu_plugins( 'activate_plugins' ) ){
+    return;
   }
+  $mu_plugin = eos_mupm_normalize_mu_plugin_basename( $mu_plugin );
+  if ( '' === $mu_plugin ) {
+    return;
+  }
+  $name = pathinfo( $mu_plugin, PATHINFO_FILENAME );
+  if ( '' === $name || '.' === $name || '..' === $name ) {
+    return;
+  }
+  eos_mupm_rename_mu_plugin( $mu_plugin, $name . '.php' );
 }
 //Deactivate mu-plugin
 function eos_mupm_deactivate_mu_plugin( $mu_plugin ){
-  if( current_user_can( 'deactivate_plugin' ) ){
-    eos_mupm_rename_mu_plugin( $mu_plugin, str_replace( '.php','.disabled-' . uniqid(), $mu_plugin ) );
+  if( ! eos_mupm_user_can_manage_mu_plugins( 'deactivate_plugin' ) ){
+    return;
   }
+  $mu_plugin = eos_mupm_normalize_mu_plugin_basename( $mu_plugin );
+  if ( '' === $mu_plugin || '.php' !== substr( $mu_plugin, -4 ) ) {
+    return;
+  }
+  $name = pathinfo( $mu_plugin, PATHINFO_FILENAME );
+  if ( '' === $name || '.' === $name || '..' === $name ) {
+    return;
+  }
+  eos_mupm_rename_mu_plugin( $mu_plugin, $name . '.disabled-' . uniqid() );
 }
 //Delete mu-plugin
-function eos_mupm_delete_mu_plugin( $mu_plugin){
-  if( current_user_can( 'delete_plugins' ) ){
-    eos_mupm_rename_mu_plugin( $mu_plugin, str_replace( pathinfo( $mu_plugin, PATHINFO_EXTENSION ), 'deleteted-' . uniqid(), $mu_plugin ) );
+function eos_mupm_delete_mu_plugin( $mu_plugin ){
+  if( ! eos_mupm_user_can_manage_mu_plugins( 'delete_plugins' ) ){
+    return;
   }
+  if ( is_multisite() ) {
+    return;
+  }
+  $mu_plugin = eos_mupm_normalize_mu_plugin_basename( $mu_plugin );
+  $source = eos_mupm_resolve_mu_plugin_file( $mu_plugin );
+  if ( ! $source ) {
+    return;
+  }
+  $extension = pathinfo( $mu_plugin, PATHINFO_EXTENSION );
+  if ( strlen( $extension ) < 8 || 'disabled' !== substr( $extension, 0, 8 ) ) {
+    return;
+  }
+  unlink( $source );
 }
 
 //Download an mu-plugin as a zip archive.
 function eos_mupm_download_mu_plugin( $mu_plugin ){
-	if( ! current_user_can( 'activate_plugins' ) ){
+	if( ! eos_mupm_user_can_manage_mu_plugins( 'activate_plugins' ) ){
 		wp_die( esc_html__( 'Sorry, you are not allowed to download mu-plugins.', 'mu-manager' ), '', array( 'response' => 403 ) );
 	}
 
-	$mu_plugin = basename( str_replace( '\\', '/', $mu_plugin ) );
+	$mu_plugin = eos_mupm_normalize_mu_plugin_basename( $mu_plugin );
 	$source = eos_mupm_resolve_mu_plugin_file( $mu_plugin );
 	if( ! $source ){
 		wp_die( esc_html__( 'Mu-plugin not found.', 'mu-manager' ), '', array( 'response' => 404 ) );
@@ -309,27 +360,59 @@ function eos_mupm_rrmdir( $dir ){
 }
 
 //Rename file
-function eos_mupm_rename_mu_plugin( $old,$new ){
-	$writeAccess = false;
-	$access_type = get_filesystem_method();
-	if( $access_type === 'direct' ){
-		/* you can safely run request_filesystem_credentials() without any issues and don't need to worry about passing in a URL */
-		$creds = request_filesystem_credentials( admin_url(), '', false, false, array() );
-		/* initialize the API */
-		if ( ! WP_Filesystem( $creds ) ) {
-			/* any problems and we exit */
-			return false;
-		}
-    if( file_exists( WPMU_PLUGIN_DIR. '/' . $old ) ){
-      if( ! file_exists( WPMU_PLUGIN_DIR . '/index.php' ) ) {
-        file_put_contents( WPMU_PLUGIN_DIR . '/index.php', '<?php' . PHP_EOL . '// Silent is golden.' );
-      }
-      if( ! file_exists( WPMU_PLUGIN_DIR . '/mu-manager.php' ) ) {
-        file_put_contents( WPMU_PLUGIN_DIR . '/mu-manager.php', '<?php' . PHP_EOL . '// Empty MU Plugin installed by MU Manager to prevent WP from hidding the MU Plugins page.' );
-      }
-		  rename( WPMU_PLUGIN_DIR . '/' . $old, WPMU_PLUGIN_DIR . '/' . $new );
-    }
+function eos_mupm_rename_mu_plugin( $old, $new ){
+	$old = eos_mupm_normalize_mu_plugin_basename( $old );
+	$new = eos_mupm_normalize_mu_plugin_basename( $new );
+	if ( '' === $old || '' === $new || $old === $new ) {
+		return false;
 	}
+	if ( ! eos_mupm_is_allowed_mu_plugin_name( $old ) || ! eos_mupm_is_allowed_mu_plugin_name( $new ) ) {
+		return false;
+	}
+	$access_type = get_filesystem_method();
+	if ( $access_type !== 'direct' ) {
+		return false;
+	}
+	/* you can safely run request_filesystem_credentials() without any issues and don't need to worry about passing in a URL */
+	$creds = request_filesystem_credentials( admin_url(), '', false, false, array() );
+	/* initialize the API */
+	if ( ! WP_Filesystem( $creds ) ) {
+		/* any problems and we exit */
+		return false;
+	}
+	$from = WPMU_PLUGIN_DIR . '/' . $old;
+	$to = WPMU_PLUGIN_DIR . '/' . $new;
+	if ( ! is_file( $from ) || is_link( $from ) || ! eos_mupm_path_is_inside_mu_plugins( $from ) ) {
+		return false;
+	}
+	$from_real = realpath( $from );
+	$root = realpath( WPMU_PLUGIN_DIR );
+	if ( ! $from_real || ! $root || wp_normalize_path( dirname( $from_real ) ) !== wp_normalize_path( $root ) ) {
+		return false;
+	}
+	if ( file_exists( $to ) ) {
+		return false;
+	}
+	if ( ! file_exists( WPMU_PLUGIN_DIR . '/index.php' ) ) {
+		file_put_contents( WPMU_PLUGIN_DIR . '/index.php', '<?php' . PHP_EOL . '// Silent is golden.' );
+	}
+	if ( ! file_exists( WPMU_PLUGIN_DIR . '/mu-manager.php' ) ) {
+		file_put_contents( WPMU_PLUGIN_DIR . '/mu-manager.php', '<?php' . PHP_EOL . '// Empty MU Plugin installed by MU Manager to prevent WP from hidding the MU Plugins page.' );
+	}
+	return rename( $from_real, $to );
+}
+
+//Whether a filename is a safe mu-plugin basename for activate/deactivate/delete.
+function eos_mupm_is_allowed_mu_plugin_name( $filename ) {
+	$filename = eos_mupm_normalize_mu_plugin_basename( $filename );
+	if ( '' === $filename || 'index.php' === $filename || 'mu-manager.php' === $filename ) {
+		return false;
+	}
+	$extension = pathinfo( $filename, PATHINFO_EXTENSION );
+	if ( 'php' === $extension ) {
+		return true;
+	}
+	return strlen( $extension ) >= 8 && 'disabled' === substr( $extension, 0, 8 );
 }
 
 add_filter( 'plugins_list', function( $plugins ) {

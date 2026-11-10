@@ -4,32 +4,39 @@ defined( 'MU_PLUGIN_MANAGER_PLUGIN_DIR' ) || exit;
 require_once MU_PLUGIN_MANAGER_PLUGIN_DIR.'/admin/mupm-helper.php';
 
 add_action( 'admin_init',function(){
-  if( isset( $_GET['mupm-action'] ) && isset( $_GET['mu-plugin'] ) && isset( $_GET['_wpnonce'] ) ){
-    $nonce = sanitize_text_field( $_GET['_wpnonce'] );
-    $action = sanitize_text_field( $_GET['mupm-action'] );
-    $mu_plugin = sanitize_text_field( $_GET['mu-plugin'] );
-    switch( $action ){
-      case 'eos-mu-deactivate':
-        if( wp_verify_nonce( $nonce,'eos-deactivate-mu-plugin_'.$mu_plugin ) ){
-          eos_mupm_deactivate_mu_plugin( $mu_plugin );
-        }
-        break;
-      case 'eos-mu-activate':
-        if( wp_verify_nonce( $nonce,'eos-activate-mu-plugin_'.$mu_plugin ) ){
-          eos_mupm_activate_mu_plugin( $mu_plugin );
-        }
-        break;
-      case 'eos-mu-delete':
-        if( wp_verify_nonce( $nonce,'eos-delete-mu-plugin_'.$mu_plugin ) ){
-          eos_mupm_delete_mu_plugin( $mu_plugin );
-        }
-        break;
-      case 'eos-mu-download':
-        if( wp_verify_nonce( $nonce,'eos-download-mu-plugin_'.$mu_plugin ) ){
-          eos_mupm_download_mu_plugin( $mu_plugin );
-        }
-        break;
-    }
+  if( ! isset( $_GET['mupm-action'] ) || ! isset( $_GET['mu-plugin'] ) || ! isset( $_GET['_wpnonce'] ) ){
+    return;
+  }
+  if ( is_multisite() && ! is_network_admin() ) {
+    return;
+  }
+  $nonce = sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) );
+  $action = sanitize_text_field( wp_unslash( $_GET['mupm-action'] ) );
+  $mu_plugin = eos_mupm_normalize_mu_plugin_basename( isset( $_GET['mu-plugin'] ) ? $_GET['mu-plugin'] : '' );
+  if ( '' === $mu_plugin || ! eos_mupm_is_allowed_mu_plugin_name( $mu_plugin ) ) {
+    return;
+  }
+  switch( $action ){
+    case 'eos-mu-deactivate':
+      if( wp_verify_nonce( $nonce,'eos-deactivate-mu-plugin_'.$mu_plugin ) ){
+        eos_mupm_deactivate_mu_plugin( $mu_plugin );
+      }
+      break;
+    case 'eos-mu-activate':
+      if( wp_verify_nonce( $nonce,'eos-activate-mu-plugin_'.$mu_plugin ) ){
+        eos_mupm_activate_mu_plugin( $mu_plugin );
+      }
+      break;
+    case 'eos-mu-delete':
+      if( wp_verify_nonce( $nonce,'eos-delete-mu-plugin_'.$mu_plugin ) ){
+        eos_mupm_delete_mu_plugin( $mu_plugin );
+      }
+      break;
+    case 'eos-mu-download':
+      if( wp_verify_nonce( $nonce,'eos-download-mu-plugin_'.$mu_plugin ) ){
+        eos_mupm_download_mu_plugin( $mu_plugin );
+      }
+      break;
   }
 },0 );
 
@@ -37,9 +44,19 @@ add_filter( 'plugin_action_links', function( $actions, $plugin_file, $plugin_dat
   if( 'mu-manager.php' === $plugin_file ) {
     return $actions;
   }
+  if ( 'mustuse' !== $context && 'mu-plugin' !== $context ) {
+    return $actions;
+  }
+  if ( is_multisite() && ! is_network_admin() ) {
+    return $actions;
+  }
+  $plugin_file = eos_mupm_normalize_mu_plugin_basename( $plugin_file );
+  if ( '' === $plugin_file || ! eos_mupm_is_allowed_mu_plugin_name( $plugin_file ) ) {
+    return $actions;
+  }
   // Add action links to the mu-plugins.
   $plugin_id_attr = isset( $plugin_data['Name'] ) ? sanitize_key( str_replace( '.php', '', $plugin_data['Name'] ) ) : 'plugin-' . uniqid();
-  if ( current_user_can( 'deactivate_plugin' ) && '.php' === substr( $plugin_file, -4 ) ) {
+  if ( eos_mupm_user_can_manage_mu_plugins( 'deactivate_plugin' ) && '.php' === substr( $plugin_file, -4 ) ) {
     $actions['deactivate'] = sprintf(
       '<a href="%s" id="deactivate-%s" aria-label="%s">%s</a>',
       wp_nonce_url( 'plugins.php?plugin_status=mustuse&amp;mupm-action=eos-mu-deactivate&amp;mu-plugin=' . urlencode( $plugin_file ), 'eos-deactivate-mu-plugin_'.$plugin_file ),
@@ -48,7 +65,7 @@ add_filter( 'plugin_action_links', function( $actions, $plugin_file, $plugin_dat
       __( 'Deactivate' )
     );
   }
-  if ( current_user_can( 'activate_plugins' ) && '.php' !== substr( $plugin_file, -4 ) ) {
+  if ( eos_mupm_user_can_manage_mu_plugins( 'activate_plugins' ) && '.php' !== substr( $plugin_file, -4 ) ) {
     $actions['activate'] = sprintf(
       '<a href="%s" id="activate-%s" class="edit" aria-label="%s">%s</a>',
       wp_nonce_url( 'plugins.php?plugin_status=mustuse&amp;mupm-action=eos-mu-activate&amp;mu-plugin=' . urlencode( $plugin_file ), 'eos-activate-mu-plugin_'.$plugin_file ),
@@ -72,7 +89,7 @@ add_filter( 'plugin_action_links', function( $actions, $plugin_file, $plugin_dat
       );
     }
   }
-  if ( current_user_can( 'activate_plugins' ) && ( 'mustuse' === $context || 'mu-plugin' === $context ) ) {
+  if ( eos_mupm_user_can_manage_mu_plugins( 'activate_plugins' ) && ( 'mustuse' === $context || 'mu-plugin' === $context ) ) {
     $plugin_name = ! empty( $plugin_data['Name'] ) ? $plugin_data['Name'] : $plugin_file;
     $actions['download'] = sprintf(
       '<a href="%s" id="download-%s" aria-label="%s">%s</a>',
@@ -83,7 +100,7 @@ add_filter( 'plugin_action_links', function( $actions, $plugin_file, $plugin_dat
       __( 'Download', 'mu-manager' )
     );
   }
-  if ( ! is_multisite() && current_user_can( 'delete_plugins' ) && '.php' !== substr( $plugin_file, -4 ) ) {
+  if ( ! is_multisite() && eos_mupm_user_can_manage_mu_plugins( 'delete_plugins' ) && '.php' !== substr( $plugin_file, -4 ) ) {
     $actions['delete'] = sprintf(
       '<a href="%s" id="delete-%s" class="delete" aria-label="%s">%s</a>',
       wp_nonce_url( 'plugins.php?plugin_status=mustuse&amp;mupm-action=eos-mu-delete&amp;mu-plugin=' . urlencode( $plugin_file ), 'eos-delete-mu-plugin_'.$plugin_file ),

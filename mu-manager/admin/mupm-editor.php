@@ -17,6 +17,9 @@ add_filter( 'pre_update_option_active_plugins', 'eos_mupm_strip_bridge_plugins' 
 add_filter( 'pre_update_site_option_active_sitewide_plugins', 'eos_mupm_strip_bridge_plugins' );
 
 function eos_mupm_delete_bridges_after_save() {
+	if ( ! function_exists( 'current_user_can' ) || ! current_user_can( 'edit_plugins' ) ) {
+		return;
+	}
 	if ( ! eos_mupm_is_finished_mu_plugin_save() ) {
 		return;
 	}
@@ -148,9 +151,17 @@ function eos_mupm_sync_editor_bridges() {
 	if ( ! is_dir( WP_PLUGIN_DIR ) || ! is_writable( WP_PLUGIN_DIR ) ) {
 		return false;
 	}
+	$requested = eos_mupm_requested_bridge_plugin();
+	if ( '' === $requested ) {
+		eos_mupm_delete_stale_bridges( array() );
+		return false;
+	}
 	$sources = eos_mupm_editor_sources();
 	$expected = array();
 	foreach ( $sources as $folder => $source ) {
+		if ( $folder . '/' . $source['php'] !== $requested ) {
+			continue;
+		}
 		$dir = WP_PLUGIN_DIR . '/' . $folder;
 		if ( file_exists( $dir ) && ( is_link( $dir ) || ! is_dir( $dir ) || ! file_exists( $dir . '/.mupm-bridge' ) ) ) {
 			continue;
@@ -159,6 +170,7 @@ function eos_mupm_sync_editor_bridges() {
 			continue;
 		}
 		file_put_contents( $dir . '/.mupm-bridge', $source['file'] );
+		eos_mupm_harden_bridge_dir( $dir );
 		if ( ! eos_mupm_ensure_file_link( $source['path'], $dir . '/' . $source['php'] ) ) {
 			continue;
 		}
@@ -177,7 +189,22 @@ function eos_mupm_sync_editor_bridges() {
 	eos_mupm_delete_stale_bridges( $expected );
 	clearstatcache();
 	eos_mupm_cache_editor_plugins();
-	return true;
+	return ! empty( $expected );
+}
+
+// Block direct HTTP access to bridge dirs on Apache; the Plugin File Editor uses the filesystem.
+function eos_mupm_harden_bridge_dir( $dir ) {
+	$htaccess = $dir . '/.htaccess';
+	if ( ! file_exists( $htaccess ) ) {
+		file_put_contents(
+			$htaccess,
+			"<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\nDeny from all\n</IfModule>\n"
+		);
+	}
+	$index = $dir . '/index.php';
+	if ( ! file_exists( $index ) ) {
+		file_put_contents( $index, "<?php\n// Silence is golden.\n" );
+	}
 }
 
 function eos_mupm_ensure_file_link( $target, $link ) {

@@ -1,10 +1,10 @@
 === Mu Manager - Manage mu-plugins like standard plugins ===
 
 Contributors:      giuse
-Requires at least: 4.6
+Requires at least: 6.0
 Tested up to: 7.1
-Requires PHP:      5.6
-Stable tag:        0.0.6
+Requires PHP:      8.0
+Stable tag:        0.0.7
 License:           GPLv2 or later
 License URI:       https://www.gnu.org/licenses/gpl-2.0.html
 Tags:              mu plugin, must use, must-use
@@ -64,6 +64,14 @@ The download is a zip archive. It contains the mu-plugin PHP file and, when pres
 If you have any issues don't hesitate to open a thread on the support forum.
 
 == Changelog ==
+
+= 0.0.7 =
+*Security: create only the requested editor bridge and harden bridge directories
+*Security: gate bridge cleanup behind edit_plugins capability
+*Security: remove editor bridges on uninstall
+*Security: validate mu-plugin basenames and paths before rename/delete/download
+*Security: block mu-plugin actions from sub-site admin on multisite
+*Changed: permanently delete disabled mu-plugins instead of renaming them
 
 = 0.0.6 =
 *Changed: remove the editor links after an mu-plugin save has finished
